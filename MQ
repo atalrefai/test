@@ -1,0 +1,1039 @@
+//+------------------------------------------------------------------+
+//|                                                      MarkovEA.mq5 |
+//|                        Copyright 2023, Your Company              |
+//|                     http://www.yourcompany.net                   |
+//+------------------------------------------------------------------+
+#property strict
+#property copyright "Your Company"
+#property link      "http://www.yourcompany.com"
+#property version   "1.00"
+#property description "Markov Model-based Expert Advisor"
+
+// Input parameters
+input int historySize = 1000000000; // Number of bars to consider for the Markov model
+
+//--- indicator buffers
+double OpenPrices[];
+double ClosePrices[];
+double HighPrices[];
+double LowPrices[];
+double Spread[];
+double TickVolume[];
+
+string SYMBOLY=Symbol();
+ENUM_TIMEFRAMES TIMEFRAME = PERIOD_M5;
+// Global variables
+
+// Input parameters for various indicators
+double OverboughtThreshold = 50;//70;
+double OversoldThreshold = 30;
+int ShortTermMAPeriod = 14;
+int LongTermMAPeriod = 30;//50;
+double BollingerBandPeriod = 20;
+double FibonacciRetracementLevel = 0.618; // Example for 61.8%
+int MACDPeriodShort = 12;
+int MACDPeriodLong =15;// 26;
+int MACDSignalPeriod = 9;
+double StochasticOverboughtLevel = 80.0;
+double StochasticOversoldLevel = 20.0;
+int StochasticPeriodK = 5;
+int StochasticPeriodD = 3;
+int ATRPeriod = 14;
+double HighVolatilityATRMultiplier = 2.0; // Example multiplier for high volatility
+
+// Input parameters for Fibonacci retracement levels
+double FibLevel1 = 0.236; // 23.6%
+double FibLevel2 = 0.382; // 38.2%
+double FibLevel3 = 0.618; // 61.8%
+double FibLevel4 = 0.786; // 78.6%
+double PriceTolerance = 0.002; // Price tolerance for considering proximity to Fibonacci levels
+
+ //Define the number of states in the Markov model
+#define STATES_COUNT 60 // Update this count to reflect the number of states
+#define MODE_MAIN    0
+#define MODE_UPPER   1
+#define MODE_LOWER   2
+
+input double lotSize = 0.01; // Define your lot size
+input double slippage = 3; // Acceptable slippage in points
+input double stopLoss = 3; // Stop Loss level
+input double takeProfit = 0.01; // Take Profit level
+
+
+// Define states
+enum MARKET_STATE  {
+    STATE_STRONG_UP,                       // Strong upward trend
+    STATE_MODERATE_UP,                     // Moderate upward trend
+    STATE_WEAK_UP,                         // Weak upward trend
+    STATE_STEADY,                          // No significant change
+    STATE_WEAK_DOWN,                       // Weak downward trend
+    STATE_MODERATE_DOWN,                   // Moderate downward trend
+    STATE_STRONG_DOWN,                     // Strong downward trend
+    STATE_VOLATILE_UP,                     // High volatility with an upward bias
+    STATE_VOLATILE_DOWN,                   // High volatility with a downward bias
+    STATE_VOLATILE,                        // High volatility, no clear direction
+    STATE_OVERBOUGHT,                      // Overbought condition
+    STATE_OVERSOLD,                        // Oversold condition
+    STATE_CONSOLIDATING,                   // Price is consolidating
+    STATE_BREAKOUT_UP,                     // Price is breaking out upwards
+    STATE_BREAKOUT_DOWN,                   // Price is breaking out downwards
+    STATE_RANGING_HIGH,                    // Price is ranging at a high level
+    STATE_RANGING_LOW,                     // Price is ranging at a low level
+    STATE_RANGING_MIDDLE,                  // Price is ranging at a middle level
+    STATE_BULLISH_REVERSAL,                // Signs of bullish reversal in a downtrend
+    STATE_BEARISH_REVERSAL,                // Signs of bearish reversal in an uptrend
+    STATE_GAP_UP,                          // Price gapped up
+    STATE_GAP_DOWN,                        // Price gapped down
+    STATE_HIGH_MOMENTUM_UP,                // High upward momentum
+    STATE_HIGH_MOMENTUM_DOWN,              // High downward momentum
+    STATE_EARLY_TREND_UP,                  // Early signs of an upward trend
+    STATE_EARLY_TREND_DOWN,                // Early signs of a downward trend
+    STATE_TREND_EXHAUSTION_UP,             // Signs of exhaustion in an upward trend
+    STATE_TREND_EXHAUSTION_DOWN,           // Signs of exhaustion in a downward trend
+    STATE_VOLUME_SPIKE_HIGH,               // High volume spike
+    STATE_VOLUME_SPIKE_LOW,                // Low volume period
+    STATE_PRICE_SHOCK_UP,                  // Sudden price jump upwards
+    STATE_PRICE_SHOCK_DOWN,                // Sudden price drop downwards
+    STATE_INDICATOR_OVERBOUGHT,            // Indicator-specific overbought condition (e.g., RSI > 70)
+    STATE_INDICATOR_OVERSOLD,              // Indicator-specific oversold condition (e.g., RSI < 30)
+    STATE_EARNINGS_REPORT_POSITIVE,        // Positive earnings report or news release
+    STATE_EARNINGS_REPORT_NEGATIVE,        // Negative earnings report or news release
+    STATE_MACD_BULLISH,                    // MACD indicator showing bullish crossover
+    STATE_MACD_BEARISH,                    // MACD indicator showing bearish crossover
+    STATE_PIVOT_POINT_SUPPORT,             // Price nears pivot point support level
+    STATE_PIVOT_POINT_RESISTANCE,          // Price nears pivot point resistance level
+    STATE_FIBONACCI_SUPPORT,               // Price nears a key Fibonacci support level
+    STATE_FIBONACCI_RESISTANCE,            // Price nears a key Fibonacci resistance level
+    STATE_MOVING_AVERAGE_CROSSOVER_UP,     // Price crosses over a key moving average upwards
+    STATE_MOVING_AVERAGE_CROSSOVER_DOWN,   // Price crosses over a key moving average downwards
+    STATE_CANDLESTICK_BULLISH,             // Bullish candlestick pattern formed
+    STATE_CANDLESTICK_BEARISH,             // Bearish candlestick pattern formed
+    STATE_SECTOR_STRENGTH,                 // The related sector shows market strength
+    STATE_SECTOR_WEAKNESS,                 // The related sector shows market weakness
+    STATE_NEWS_IMPACT_POSITIVE,            // Positive news impact
+    STATE_NEWS_IMPACT_NEGATIVE,            // Negative news impact
+    STATE_REGULATION_IMPACT_POSITIVE,      // Positive impact from regulation or policy changes
+    STATE_REGULATION_IMPACT_NEGATIVE,      // Negative impact from regulation or policy changes
+    STATE_ECONOMIC_DATA_POSITIVE,          // Positive economic data release
+    STATE_ECONOMIC_DATA_NEGATIVE,          // Negative economic data release
+    STATE_GLOBAL_EVENT_POSITIVE,           // Positive global event impact (e.g., political stability)
+    STATE_GLOBAL_EVENT_NEGATIVE,           // Negative global event impact (e.g., geopolitical tensions)
+    STATE_SEASONALITY_POSITIVE,            // Positive seasonal patterns
+    STATE_SEASONALITY_NEGATIVE,          // Negative seasonal patterns
+    STATE_MACD_ABOVE_SIGNAL,
+    STATE_MACD_BELOW_SIGNAL,
+    STATE_NEAR_FIBONACCI_LEVEL_1,
+    STATE_NEAR_FIBONACCI_LEVEL_2,
+    STATE_NEAR_FIBONACCI_LEVEL_3,
+    STATE_NEAR_FIBONACCI_LEVEL_4,
+    STATE_BULLISH_ENGULFING,
+    STATE_BEARISH_ENGULFING,
+    STATE_NEWS_IMPACT,
+    STATE_HIGH_VOLATILITY,
+    STATE_UPPER_BOLLINGER_BAND_BREACH,
+    STATE_LOWER_BOLLINGER_BAND_BREACH,
+    STATE_TREND_CONFIRMED_UP,
+    STATE_TREND_CONFIRMED_DOWN,
+    STATE_PRICE_ACTION_BULLISH,            // Bullish price action patterns identified
+    STATE_PRICE_ACTION_BEARISH,            // Bearish price action patterns identified
+    STATE_TECHNICAL_INDICATORS_BULLISH,    // Majority of technical indicators signal bullish conditions
+    STATE_TECHNICAL_INDICATORS_BEARISH,    // Majority of technical indicators signal bearish conditions
+    STATE_SENTIMENT_POSITIVE,              // Trader sentiment is predominantly positive
+    STATE_SENTIMENT_NEGATIVE,              // Trader sentiment is predominantly negative
+    STATE_LIQUIDITY_SPIKE,                 // Sudden spike in market liquidity
+    STATE_LIQUIDITY_DRY_UP,                // Market liquidity is drying up
+    STATE_INTERMARKET_BULLISH,             // Bullish signals from intermarket analysis
+    STATE_INTERMARKET_BEARISH,             // Bearish signals from intermarket analysis
+    STATE_ECONOMIC_SURPRISE_POSITIVE,      // Positive surprise in economic data release
+    STATE_ECONOMIC_SURPRISE_NEGATIVE,      // Negative surprise in economic data release
+    STATE_ALGORITHMIC_TRADING_PRESSURE_UP, // Increased buying pressure from algorithmic trading
+    STATE_ALGORITHMIC_TRADING_PRESSURE_DOWN,// Increased selling pressure from algorithmic trading
+    STATE_RISK_APPETITE_HIGH,              // High risk appetite in the market
+    STATE_RISK_AVERSION_HIGH,              // High risk aversion in the market
+    STATE_CORRELATION_BREAKDOWN,           // Breakdown in typical market correlations
+    STATE_MARKET_FATIGUE_UP,               // Signs of fatigue in an ongoing upward trend
+    STATE_MARKET_FATIGUE_DOWN,             // Signs of fatigue in an ongoing downward trend
+    STATE_ORDER_FLOW_IMBALANCE_BUY,        // Imbalance in order flow favoring buy orders
+    STATE_ORDER_FLOW_IMBALANCE_SELL,       // Imbalance in order flow favoring sell orders
+    STATE_PREDICTIVE_MODEL_BULLISH,        // Predictive modeling signals bullish conditions
+    STATE_PREDICTIVE_MODEL_BEARISH,        // Predictive modeling signals bearish conditions
+    STATE_UNUSUAL_OPTIONS_ACTIVITY_BULLISH,// Unusual options market activity signaling bullish sentiment
+    STATE_UNUSUAL_OPTIONS_ACTIVITY_BEARISH,// Unusual options market activity signaling bearish sentiment
+    STATE_BREAKOUT_VOLUME_HIGH,            // High volume supporting a price breakout
+    STATE_BREAKOUT_VOLUME_LOW,             // Low volume questioning the validity of a price breakout
+    STATE_SUPPLY_ZONE_REJECTION,           // Price rejection at a known supply zone
+    STATE_DEMAND_ZONE_SUPPORT,             // Price support at a known demand zone
+    STATE_COT_REPORT_BULLISH,              // Commitment of Traders report showing bullish sentiment
+    STATE_COT_REPORT_BEARISH,              // Commitment of Traders report showing bearish sentiment
+    STATE_QUARTERLY_EARNINGS_SURPASS,      // Companies' quarterly earnings surpass expectations
+    STATE_QUARTERLY_EARNINGS_FALL_SHORT,   // Companies' quarterly earnings fall short of expectations
+    STATE_INFLATION_EXPECTATIONS_RISE,     // Rising inflation expectations
+    STATE_INFLATION_EXPECTATIONS_FALL,      // Falling inflation expectations
+     STATE_MERGER_ACQUISITION_ANNOUNCED,    // Announcements of mergers or acquisitions
+    STATE_SHARE_BUYBACK_ANNOUNCED,         // Companies announcing share buyback programs
+    STATE_DIVIDEND_INCREASE_ANNOUNCED,     // Companies announcing an increase in dividends
+    STATE_MAJOR_PARTNERSHIP_ANNOUNCED,     // Announcements of major partnerships or collaborations
+    STATE_GOVERNMENT_POLICY_SUPPORT,       // New government policies supporting specific sectors
+    STATE_GOVERNMENT_POLICY_CONCERN,       // Government policies that might pose concerns for certain sectors
+    STATE_TECHNOLOGICAL_BREAKTHROUGH,      // Breakthroughs in technology offering sectoral advantages
+    STATE_ENVIRONMENTAL_SUSTAINABILITY_FOCUS, // Companies or sectors focusing on environmental sustainability
+    STATE_CRYPTO_MARKET_INFLUENCE,         // Crypto market trends influencing traditional markets
+    STATE_SOCIAL_MEDIA_TRENDING,           // Stocks or sectors trending on social media
+    STATE_RETAIL_INVESTOR_SURGE,           // Surge in retail investor interest in specific stocks or sectors
+    STATE_SHORT_SQUEEZE_IMMINENT,          // Conditions ripe for a short squeeze
+    STATE_REGULATORY_APPROVAL_GAINED,      // Companies gaining critical regulatory approvals
+    STATE_REGULATORY_HURDLE_FACED,         // Companies facing significant regulatory hurdles
+    STATE_INNOVATION_LEADERSHIP,           // Companies leading in innovation within their sectors
+    STATE_COMPETITION_INTENSIFIES,         // Sectors where competition is significantly intensifying
+    STATE_EARNINGS_MOMENTUM_POSITIVE,      // Companies showing strong positive earnings momentum
+    STATE_EARNINGS_MOMENTUM_NEGATIVE,      // Companies showing strong negative earnings momentum
+    STATE_VALUATION_OVERSTRETCHED,         // Stocks or sectors with overstretched valuations
+    STATE_VALUATION_ATTRACTIVE,            // Stocks or sectors with attractive valuations
+    STATE_INTEREST_RATE_SENSITIVITY_HIGH,  // Markets or sectors highly sensitive to interest rate changes
+    STATE_INTEREST_RATE_SENSITIVITY_LOW,   // Markets or sectors with low sensitivity to interest rate changes
+    STATE_CURRENCY_IMPACT_POSITIVE,        // Positive impact from currency movements
+    STATE_CURRENCY_IMPACT_NEGATIVE,        // Negative impact from currency movements
+    STATE_COMMODITY_PRICE_BOOM,            // Booming commodity prices impacting related sectors
+    STATE_COMMODITY_PRICE_SLUMP,           // Slumping commodity prices affecting related sectors
+    STATE_GLOBAL_SUPPLY_CHAIN_RECOVERY,    // Signs of global supply chain recovery
+    STATE_GLOBAL_SUPPLY_CHAIN_DISRUPTION,  // Disruptions in the global supply chain
+    STATE_CONSUMER_SENTIMENT_RISE,         // Rise in consumer sentiment indicating economic optimism
+    STATE_CONSUMER_SENTIMENT_FALL,         // Fall in consumer sentiment indicating economic pessimism
+    STATE_POLITICAL_STABILITY_GAINED,      // Regions gaining political stability, affecting markets positively
+    STATE_POLITICAL_UNREST_RISK,           // Risks of political unrest affecting market stability
+    STATE_SECTOR_ROTATION_EVIDENT,         // Clear signs of sector rotation by institutional investors
+    STATE_HEDGE_FUND_INTEREST_INCREASE,    // Increased interest from hedge funds in certain sectors or stocks
+    STATE_INSIDER_BUYING_INCREASED,        // Significant increase in insider buying
+    STATE_INSIDER_SELLING_INCREASED,       // Significant increase in insider selling
+    STATE_INSTITUTIONAL_OWNERSHIP_CONCENTRATION, // High concentration of institutional ownership
+    STATE_MARKET_LEADERSHIP_CHANGE,        // Changes in market leadership signaling new trends
+    STATE_TECHNICAL_BREAKDOWN,             // Technical breakdowns indicating bearish trends
+    STATE_TECHNICAL_BREAKOUT,              // Technical breakouts indicating bullish trends
+    STATE_VOLUME_CONSOLIDATION,            // Volume consolidation indicating potential breakout or breakdown
+    STATE_WHALE_ACTIVITY_DETECTED,         // Significant trading activity by "whales" or large stakeholders
+    STATE_ALGO_TRADING_VOLATILITY_INCREASE,// Increased volatility attributed to algorithmic trading activities
+    STATE_GOLD_TECHNICAL_OVERSOLD,             // Gold-specific technical indicators signaling oversold conditions
+    STATE_GOLD_BREAKOUT_DOWN_CONFIRMED,        // Confirmed breakout to the downside for gold
+    STATE_GOLD_RESISTANCE_HOLD,                // Gold prices failing to break above key resistance levels
+    STATE_GOLD_DEMAND_WEAKENING,               // Indications of weakening demand for gold
+    STATE_GOLD_INVESTMENT_DEMAND_DROP,         // Drop in investment demand for gold, e.g., ETF outflows
+    STATE_GOLD_CENTRAL_BANKS_SELLING,          // Reports of central banks reducing their gold reserves
+    STATE_GOLD_MINING_OUTPUT_INCREASE,         // Increase in gold mining output, potentially leading to oversupply
+    STATE_USD_STRENGTHENING_AGAINST_GOLD,      // The USD strengthening against gold, making gold more expensive in other currencies
+    STATE_REAL_INTEREST_RATES_RISING,          // Rising real interest rates, diminishing gold's appeal as a non-yielding asset
+    STATE_GOLD_IMPORT_TARIFFS_RAISED,          // Increased import tariffs on gold in key markets
+    STATE_GOLD_JEWELRY_DEMAND_FALL,            // Fall in demand for gold jewelry, particularly in major markets like India and China
+    STATE_GOLD_TECHNICAL_SMA_CROSSOVER_BEARISH,// Bearish simple moving average (SMA) crossover in gold price charts
+    STATE_GOLD_FUTURES_CONTRACTS_BEARISH_SENTIMENT, // Bearish sentiment in gold futures contracts
+    STATE_GOLD_MARKET_MANIPULATION_RUMORS,     // Rumors or news of market manipulation in the gold market
+    STATE_GOLD_LIQUIDATION_BY_LARGE_HOLDERS,   // Large-scale gold liquidation by institutional holders or hedge funds
+    STATE_GOLD_SAFE_HAVEN_DEMAND_DROP,         // Decrease in demand for gold as a safe haven asset
+    STATE_GOLD_BEARISH_HARMONIC_PATTERN,       // Bearish harmonic pattern recognition in gold trading charts
+    STATE_GOLD_PRICE_BELOW_200DMA,             // Gold price falling below the 200-day moving average
+    STATE_INVESTOR_SENTIMENT_SHIFT_FROM_GOLD,  // Shift in investor sentiment away from gold to other assets
+    STATE_GOLD_BEARISH_ENGULFING_PATTERN,      // Bearish engulfing candlestick pattern on gold charts
+    STATE_ECONOMIC_RECOVERY_STRENGTHENING,     // Strengthening economic recovery reducing gold's appeal as a hedge
+    STATE_GOLD_TRADING_VOLUME_DECLINE,         // Decline in trading volumes for gold, indicating reduced interest
+    STATE_GOLD_DERIVATIVES_BEARISH_INDICATORS // Bearish indicators from gold derivatives markets
+
+};
+
+
+// Structure to hold historical market transitions for learning
+struct MarketTransition {
+    MARKET_STATE fromState;
+    MARKET_STATE toState;
+};
+
+enum TradeAction {
+    BUY,
+    SELL,
+    HOLD
+};
+
+// Global variables
+MARKET_STATE currentState = STATE_STEADY; // Placeholder for the current state
+// Global variable to store the previous market state
+MARKET_STATE previousState = STATE_STEADY; // Initialize with a default state
+
+
+// Dynamic array to store transitions over time
+MarketTransition historicalTransitions[];
+
+// Corrected LogStateTransition function
+void LogStateTransition(MARKET_STATE localPreviousState, MARKET_STATE localCurrentState) {
+    MarketTransition transition;
+    transition.fromState = localPreviousState;
+    transition.toState = localCurrentState;
+    
+    // Determine the new size for the array
+    int newSize = ArraySize(historicalTransitions) + 1;
+    
+    // Resize the array to accommodate one more element
+    ArrayResize(historicalTransitions, newSize);
+    
+    // Add the new transition to the end of the array
+    historicalTransitions[newSize - 1] = transition;
+}
+
+
+// Updates the Markov model's transition probabilities from historical data
+void LearnFromHistoricalData() {
+    // Iterate over all possible state transitions to update probabilities
+    for (int fromState = 0; fromState < STATES_COUNT; fromState++) {
+        for (int toState = 0; toState < STATES_COUNT; toState++) {
+            transitionMatrix[fromState][toState] = CalculateTransitionProbability(fromState, toState, historicalTransitions);
+        }
+    }
+}
+
+// Calculates transition probability based on historical occurrences
+double CalculateTransitionProbability(int fromState, int toState, const MarketTransition& transitions[]) {
+    double transitionCount = 0;
+    double totalCount = 0;
+    
+    // Use ArraySize to get the number of elements in the transitions array
+    int transitionsSize = ArraySize(transitions);
+    
+    // Count occurrences of transitions from the specified state
+    for (int i = 0; i < transitionsSize; i++) {
+        if (transitions[i].fromState == fromState) {
+            totalCount++;
+            if (transitions[i].toState == toState) {
+                transitionCount++;
+            }
+        }
+    }
+
+    // Avoid division by zero; default to uniform distribution if no data
+    if (totalCount == 0) return 1.0 / STATES_COUNT;
+    return transitionCount / totalCount; // Probability calculation
+}
+
+// Determines if the model should be updated based on predefined criteria
+bool ShouldUpdateModel() {
+    static datetime lastUpdateTime = 0;
+    // Example criterion: update model every week
+    if (TimeCurrent() - lastUpdateTime > 604800) { // 604800 seconds in a week
+        lastUpdateTime = TimeCurrent();
+        return true;
+    }
+    return false;
+}
+
+// Periodically invokes the learning function to update the model
+void PeriodicUpdate() {
+    if (ShouldUpdateModel()) {
+        LearnFromHistoricalData(); // Trigger learning process
+    }
+}
+
+void CheckModelUpdate() {
+
+if(ShouldUpdateModel()) {
+PeriodicUpdate();
+
+}
+
+}
+
+// Transition probability matrix (3x3 for simplicity)
+double transitionMatrix[STATES_COUNT][STATES_COUNT];
+//+-----------------------------------------------------------+
+// Function to initialize your Markov model                   |
+//+-----------------------------------------------------------+
+void InitializeMarkovModel() {
+    // Initialize transition matrix with placeholder probabilities
+    for (int fromState = 0; fromState < STATES_COUNT; fromState++) {
+        double sumProbabilities = 0.0;
+        for (int toState = 0; toState < STATES_COUNT; toState++) {
+            // Assign a placeholder probability value or calculate based on historical data
+            // Placeholder: Uniform distribution (1 / STATES_COUNT), you should replace this with actual probabilities
+            transitionMatrix[fromState][toState] = 1.0 / STATES_COUNT;
+
+            // Accumulate the sum to normalize probabilities later if necessary
+            sumProbabilities += transitionMatrix[fromState][toState];
+        }
+
+        // Normalize the probabilities to ensure they sum to 1 for each state
+        for (int toState = 0; toState < STATES_COUNT; toState++) {
+            transitionMatrix[fromState][toState] /= sumProbabilities;
+        }
+    }
+
+    Comment("\nMarkov Model Initialized with placeholder transition probabilities.");
+}
+
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+    // Array Set As Series - for accessing the prices in reverse order
+    SetIndexBuffer(0, OpenPrices, INDICATOR_DATA);
+    SetIndexBuffer(1, ClosePrices, INDICATOR_DATA);
+    SetIndexBuffer(2, HighPrices, INDICATOR_DATA);
+    SetIndexBuffer(3, LowPrices, INDICATOR_DATA);
+    SetIndexBuffer(4, Spread, INDICATOR_CALCULATIONS);
+    SetIndexBuffer(5, TickVolume, INDICATOR_DATA);
+
+    ArraySetAsSeries(OpenPrices, true);
+    ArraySetAsSeries(ClosePrices, true);
+    ArraySetAsSeries(HighPrices, true);
+    ArraySetAsSeries(LowPrices, true);
+    ArraySetAsSeries(Spread, true);
+    ArraySetAsSeries(TickVolume, true);
+    
+    // Initialize your Markov model here
+    InitializeMarkovModel();
+   
+   // Learn model initially from any hardcoded sample data
+   LearnFromHistoricalData();
+    Print("Markov Model-based EA Initialized successfully!");
+    return(INIT_SUCCEEDED);
+  }
+
+//+------------------------------------------------------------+
+//|Function to determine the current state based on market data|
+//+------------------------------------------------------------+
+MARKET_STATE DetermineCurrentState(double &OpenPricesD[], double &ClosePricesD[], double &HighPricesD[], double &LowPricesD[], double &SpreadD[], double &TickVolumeD[]) {
+    // RSI Analysis for Overbought/Oversold conditions
+    double rsiValue = iRSI(SYMBOLY, TIMEFRAME, 14, PRICE_CLOSE); // Corrected parameters for iRSI
+    if (rsiValue > OverboughtThreshold) {
+        return STATE_OVERBOUGHT;
+    } else if (rsiValue < OversoldThreshold) {
+        return STATE_OVERSOLD;
+    }
+    
+    // Moving Average Analysis for Trend Confirmation
+    double shortTermMA = iMA(SYMBOLY, PERIOD_MN1, ShortTermMAPeriod, 0, MODE_EMA, PRICE_CLOSE); // Corrected parameters for iMA (Short-term)
+    double longTermMA = iMA(SYMBOLY, PERIOD_MN1, LongTermMAPeriod, 0, MODE_EMA, PRICE_CLOSE); // Corrected parameters for iMA (Long-term)
+    if (shortTermMA > longTermMA) {
+        return STATE_TREND_CONFIRMED_UP;
+    } else if (shortTermMA < longTermMA) {
+        return STATE_TREND_CONFIRMED_DOWN;
+    }
+    
+
+   // Bollinger Bands Analysis for Market Volatility and Trend
+// Bollinger Bands Analysis for Market Volatility and Trend
+int bands_handle = iBands(SYMBOLY, TIMEFRAME, BollingerBandPeriod, 2, 2.0, PRICE_CLOSE);
+if(bands_handle != INVALID_HANDLE)
+{
+    // Define arrays to hold indicator data
+    double upperBand[], middleBand[], lowerBand[];
+
+    // Define the length of the data to copy (e.g., length of ClosePrices or a specific range)
+    long dataLength = ArraySize(ClosePrices);
+
+    // Resize arrays to ensure they have enough space to hold the copied data
+    ArraySetAsSeries(upperBand, true);
+    ArraySetAsSeries(middleBand, true);
+    ArraySetAsSeries(lowerBand, true);
+    ArrayResize(upperBand, dataLength);
+    ArrayResize(middleBand, dataLength);
+    ArrayResize(lowerBand, dataLength);
+
+    // Copy data from the indicator buffers to the arrays
+    int copied;
+    copied = CopyBuffer(bands_handle, 0, 0, dataLength, upperBand); // Upper band
+    if(copied <= 0) { Comment("\nFailed to copy data for upper Bollinger Band. Error code: ", GetLastError()); }
+    
+    copied = CopyBuffer(bands_handle, 1, 0, dataLength, middleBand); // Middle/Main band
+    if(copied <= 0) { Comment("\nFailed to copy data for middle Bollinger Band. Error code: ", GetLastError()); }
+    
+    copied = CopyBuffer(bands_handle, 2, 0, dataLength, lowerBand); // Lower band
+    if(copied <= 0) { Comment("\nFailed to copy data for lower Bollinger Band. Error code: ", GetLastError()); }
+
+    // Now you can use upperBand[0], middleBand[0], and lowerBand[0] for the most recent data point
+    // For example:
+    if (ClosePrices[0] > upperBand[0]) {
+        // Do something if the price is above the upper Bollinger band
+    } else if (ClosePrices[0] < lowerBand[0]) {
+        // Do something if the price is below the lower Bollinger band
+    }
+
+    // Don't forget to release the indicator handle if you no longer need it
+    IndicatorRelease(bands_handle);
+}
+else
+{
+    Comment("\nFailed to initialize Bollinger Bands indicator. Error code: ", GetLastError());
+}
+
+
+// Stochastic Oscillator Analysis for Overbought/Oversold conditions
+int stochastic_handle = iStochastic(SYMBOLY, TIMEFRAME, StochasticPeriodK, StochasticPeriodD, 3, MODE_SMA, STO_LOWHIGH);
+if(stochastic_handle != INVALID_HANDLE)
+{
+    // Define arrays to hold indicator data
+    double stochasticK[], stochasticD[];
+
+    // Define the length of the data to copy (e.g., length of ClosePrices or a specific range)
+    long dataLength = ArraySize(ClosePrices);
+
+    // Resize arrays to ensure they have enough space to hold the copied data
+    ArraySetAsSeries(stochasticK, true);
+    ArraySetAsSeries(stochasticD, true);
+    ArrayResize(stochasticK, dataLength);
+    ArrayResize(stochasticD, dataLength);
+
+    // Copy data from the indicator buffers to the arrays
+    int copied;
+    copied = CopyBuffer(stochastic_handle, 0, 0, dataLength, stochasticK); // K line
+    if(copied <= 0) { Comment("\nFailed to copy data for Stochastic K line. Error code: ", GetLastError()); }
+    
+    copied = CopyBuffer(stochastic_handle, 1, 0, dataLength, stochasticD); // D line
+    if(copied <= 0) { Comment("\nFailed to copy data for Stochastic D line. Error code: ", GetLastError()); }
+
+    // Now you can use stochasticK[0] and stochasticD[0] for the most recent data point
+    // For example:
+    if (stochasticK[0] > StochasticOverboughtLevel && stochasticD[0] > StochasticOverboughtLevel) {
+        // Do something if the Stochastic is in the overbought region
+    } else if (stochasticK[0] < StochasticOversoldLevel && stochasticD[0] < StochasticOversoldLevel) {
+        // Do something if the Stochastic is in the oversold region
+    }
+
+    // Don't forget to release the indicator handle if you no longer need it
+    IndicatorRelease(stochastic_handle);
+}
+else
+{
+    Comment("\nFailed to initialize Stochastic Oscillator indicator. Error code: ", GetLastError());
+}
+
+
+    // ATR Analysis for High Volatility
+      double atrValue = iATR(SYMBOLY, PERIOD_MN1, ATRPeriod); // Corrected parameters for iATR
+    if (atrValue > HighVolatilityATRMultiplier * MathSqrt(CalculateAverageTrueRange(HighPrices, LowPrices, ClosePrices,PERIOD_MN1))) {
+        return STATE_HIGH_VOLATILITY; // High volatility condition
+    }
+
+    // Placeholder for News Impact Analysis
+    // Note: Actual implementation would require integration with a news feed or economic calendar API
+    //bool significantNews = CheckForSignificantNews(); // Placeholder function
+    //if (significantNews) {
+    //    return STATE_NEWS_IMPACT; // Significant news impact
+   // }
+
+    // MACD Analysis for Trend Reversals
+// MACD Analysis for Trend Reversals
+int macd_handle = iMACD(SYMBOLY, TIMEFRAME, MACDPeriodShort, MACDPeriodLong, MACDSignalPeriod, PRICE_CLOSE);
+if(macd_handle != INVALID_HANDLE)
+{
+    // Define arrays to hold indicator data
+    double macdMainLine[], signalLine[], macdHistogram[];
+
+    // Define the length of the data to copy (e.g., length of ClosePrices or a specific range)
+    long dataLength = ArraySize(ClosePrices);
+
+    // Resize arrays to ensure they have enough space to hold the copied data
+    ArraySetAsSeries(macdMainLine, true);
+    ArraySetAsSeries(signalLine, true);
+    ArraySetAsSeries(macdHistogram, true);
+    ArrayResize(macdMainLine, dataLength);
+    ArrayResize(signalLine, dataLength);
+    ArrayResize(macdHistogram, dataLength);
+
+    // Copy data from the indicator buffers to the arrays
+    int copied;
+    copied = CopyBuffer(macd_handle, 0, 0, dataLength, macdMainLine); // Main line
+    if(copied <= 0) { Comment("\nFailed to copy data for MACD main line. Error code: ", GetLastError()); }
+    
+    copied = CopyBuffer(macd_handle, 1, 0, dataLength, signalLine); // Signal line
+    if(copied <= 0) { Comment("\nFailed to copy data for MACD signal line. Error code: ", GetLastError()); }
+    
+    copied = CopyBuffer(macd_handle, 2, 0, dataLength, macdHistogram); // Histogram
+    if(copied <= 0) { Comment("\nFailed to copy data for MACD histogram. Error code: ", GetLastError()); }
+
+    // Now you can use macdMainLine[0], signalLine[0], and macdHistogram[0] for the most recent data point
+    // For example:
+    if (macdMainLine[0] > signalLine[0]) {
+        return STATE_MACD_ABOVE_SIGNAL; // MACD is above the signal line, potentially bullish
+    } else if (macdMainLine[0] < signalLine[0]) {
+        return STATE_MACD_BELOW_SIGNAL; // MACD is below the signal line, potentially bearish
+    }
+
+    // Don't forget to release the indicator handle if you no longer need it
+    IndicatorRelease(macd_handle);
+}
+else
+{
+    Comment("\nFailed to initialize MACD indicator. Error code: ", GetLastError());
+}
+
+
+    // Placeholder for Fibonacci Retracement Analysis
+    if (IsPriceNearFibonacciLevel(ClosePrices[0], HighPrices[0], LowPrices[0], FibLevel1, PriceTolerance)) {
+    return STATE_NEAR_FIBONACCI_LEVEL_1; // Price is near the 23.6% Fibonacci level
+} else if (IsPriceNearFibonacciLevel(ClosePrices[0], HighPrices[0], LowPrices[0], FibLevel2, PriceTolerance)) {
+    return STATE_NEAR_FIBONACCI_LEVEL_2; // Price is near the 38.2% Fibonacci level
+} else if (IsPriceNearFibonacciLevel(ClosePrices[0], HighPrices[0], LowPrices[0], FibLevel3, PriceTolerance)) {
+    return STATE_NEAR_FIBONACCI_LEVEL_3; // Price is near the 61.8% Fibonacci level
+} else if (IsPriceNearFibonacciLevel(ClosePrices[0], HighPrices[0], LowPrices[0], FibLevel4, PriceTolerance)) {
+    return STATE_NEAR_FIBONACCI_LEVEL_4; // Price is near the 78.6% Fibonacci level
+}
+
+    // Placeholder for Candlestick Pattern Analysis
+    if (IsBullishEngulfing(OpenPrices, ClosePrices)) {
+    return STATE_BULLISH_ENGULFING; // Bullish Engulfing pattern detected
+} else if (IsBearishEngulfing(OpenPrices, ClosePrices)) {
+    return STATE_BEARISH_ENGULFING; // Bearish Engulfing pattern detected
+}
+
+    // Default to steady state
+    return STATE_STEADY;
+}
+
+bool IsPriceNearFibonacciLevel(double price, double high, double low, double fibLevel, double tolerance) {
+    double fibRetracementLevel = high - (high - low) * fibLevel;
+    return MathAbs(price - fibRetracementLevel) <= (tolerance * (high - low));
+}
+
+// Function to check for Bullish Engulfing pattern
+bool IsBullishEngulfing(double &OpenPricess[], double &ClosePricess[]) {
+    // Bullish Engulfing pattern is identified when the last candle completely engulfs the previous one and is bullish
+    return (ClosePricess[1] < OpenPricess[1]) && // Previous candle was bearish
+           (OpenPricess[0] < ClosePricess[0]) && // Current candle is bullish
+           (OpenPricess[0] < ClosePricess[1]) && // Current candle opens lower than previous candle's close
+           (ClosePricess[0] > OpenPricess[1]);   // Current candle closes higher than previous candle's open
+}
+
+// Function to check for Bearish Engulfing pattern
+bool IsBearishEngulfing(double &OpenPricexs[], double &ClosePricesx[]) {
+    // Bearish Engulfing pattern is identified when the last candle completely engulfs the previous one and is bearish
+    return (ClosePricesx[1] > OpenPricexs[1]) && // Previous candle was bullish
+           (OpenPricexs[0] > ClosePricesx[0]) && // Current candle is bearish
+           (OpenPricexs[0] > ClosePricesx[1]) && // Current candle opens higher than previous candle's close
+           (ClosePricesx[0] < OpenPricexs[1]);   // Current candle closes lower than previous candle's open
+}
+
+//+------------------------------------------------------------------+
+//| Custom function to calculate the Average True Range (ATR)        |
+//| ATR is a measure of market volatility                            |
+//+------------------------------------------------------------------+
+double CalculateAverageTrueRange(double &HighPricess[], double &LowPricess[], double &ClosePricess[], int period) {
+    // Ensure there is enough data
+    if (ArraySize(ClosePrices) < period || ArraySize(HighPrices) < period || ArraySize(LowPrices) < period) {
+        Comment("\nNot enough data to calculate ATR.");
+        return 0.0;
+    }
+
+    // Create an array to hold True Range values
+    double trueRanges[];
+    ArrayResize(trueRanges, period);
+
+    // Calculate True Range for each period
+    for (int i = 0; i < period; i++) {
+        double currentHigh = HighPrices[i];
+        double currentLow = LowPrices[i];
+        double previousClose = i < period - 1 ? ClosePrices[i + 1] : ClosePrices[i];
+
+        // True Range is the largest of the following: current high - current low, current high - previous close, current low - previous close
+        double trueRange = MathMax(currentHigh - currentLow, MathMax(MathAbs(currentHigh - previousClose), MathAbs(currentLow - previousClose)));
+        trueRanges[i] = trueRange;
+    }
+
+    // Calculate the average of the true ranges
+    double averageTrueRange = 0.0;
+    for (int i = 0; i < period; i++) {
+        averageTrueRange += trueRanges[i];
+    }
+    averageTrueRange /= period;
+
+    return averageTrueRange;
+}
+
+
+
+// Function to predict the next state using the Markov model
+TradeAction PredictNextState(double &OpenPricess[], double &ClosePricess[], double &HighPricess[], double &LowPricess[], double &Spreads[], double &TickVolumes[]) {
+    // Determine the current market state
+    MARKET_STATE currentState = DetermineCurrentState(OpenPricess, ClosePricess, HighPricess, LowPricess, Spreads, TickVolumes);
+
+    // Use the transition matrix to predict the next state
+    double highestProbability = 0.0;
+    MARKET_STATE mostLikelyNextState = currentState;
+    for (int nextState = 0; nextState < STATES_COUNT; nextState++) {
+        if (transitionMatrix[currentState][nextState] > highestProbability) {
+            highestProbability = transitionMatrix[currentState][nextState];
+            mostLikelyNextState = (MARKET_STATE)nextState;
+        }
+    }
+
+    // Convert the predicted state to a trading action (this is simplified and should be based on your strategy)
+    switch (mostLikelyNextState) {
+        // Upward trend states
+        case STATE_STRONG_UP:
+        case STATE_MODERATE_UP:
+        case STATE_EARLY_TREND_UP:
+        case STATE_BREAKOUT_UP:
+        case STATE_BULLISH_REVERSAL:
+        case STATE_GAP_UP:
+        case STATE_HIGH_MOMENTUM_UP:
+        case STATE_MOVING_AVERAGE_CROSSOVER_UP:
+        case STATE_MACD_BULLISH:
+        case STATE_SECTOR_STRENGTH:
+        case STATE_EARNINGS_REPORT_POSITIVE:
+        case STATE_NEWS_IMPACT_POSITIVE:
+        case STATE_REGULATION_IMPACT_POSITIVE:
+        case STATE_ECONOMIC_DATA_POSITIVE:
+        case STATE_GLOBAL_EVENT_POSITIVE:
+        case STATE_SEASONALITY_POSITIVE:
+        case STATE_PRICE_ACTION_BULLISH:
+        case STATE_TECHNICAL_INDICATORS_BULLISH:
+        case STATE_SENTIMENT_POSITIVE:
+        case STATE_INTERMARKET_BULLISH:
+        case STATE_ECONOMIC_SURPRISE_POSITIVE:
+        case STATE_ALGORITHMIC_TRADING_PRESSURE_UP:
+        case STATE_RISK_APPETITE_HIGH:
+        case STATE_PREDICTIVE_MODEL_BULLISH:
+        case STATE_UNUSUAL_OPTIONS_ACTIVITY_BULLISH:
+        case STATE_BREAKOUT_VOLUME_HIGH:
+        case STATE_DEMAND_ZONE_SUPPORT:
+        case STATE_COT_REPORT_BULLISH:
+        case STATE_QUARTERLY_EARNINGS_SURPASS:
+        case STATE_INFLATION_EXPECTATIONS_FALL:
+        case STATE_TECHNOLOGICAL_BREAKTHROUGH:
+        case STATE_DIVIDEND_INCREASE_ANNOUNCED:
+        case STATE_MERGER_ACQUISITION_ANNOUNCED:
+        case STATE_MAJOR_PARTNERSHIP_ANNOUNCED:
+        case STATE_GOVERNMENT_POLICY_SUPPORT:
+        case STATE_INNOVATION_LEADERSHIP:
+        case STATE_EARNINGS_MOMENTUM_POSITIVE:
+        case STATE_VALUATION_ATTRACTIVE:
+        case STATE_INTEREST_RATE_SENSITIVITY_LOW:
+        case STATE_CURRENCY_IMPACT_POSITIVE:
+        case STATE_COMMODITY_PRICE_BOOM:
+        case STATE_GLOBAL_SUPPLY_CHAIN_RECOVERY:
+        case STATE_CONSUMER_SENTIMENT_RISE:
+        case STATE_POLITICAL_STABILITY_GAINED:
+        case STATE_SECTOR_ROTATION_EVIDENT:
+        case STATE_INSIDER_BUYING_INCREASED:
+        case STATE_TECHNICAL_BREAKOUT:
+        case STATE_WHALE_ACTIVITY_DETECTED:
+            return BUY; // Example: Buy in strong upward trends or positive market conditions
+
+        // Downward trend states
+        case STATE_STRONG_DOWN:
+        case STATE_MODERATE_DOWN:
+        case STATE_EARLY_TREND_DOWN:
+        case STATE_BREAKOUT_DOWN:
+        case STATE_BEARISH_REVERSAL:
+        case STATE_GAP_DOWN:
+        case STATE_HIGH_MOMENTUM_DOWN:
+        case STATE_MOVING_AVERAGE_CROSSOVER_DOWN:
+        case STATE_MACD_BEARISH:
+        case STATE_SECTOR_WEAKNESS:
+        case STATE_EARNINGS_REPORT_NEGATIVE:
+        case STATE_NEWS_IMPACT_NEGATIVE:
+        case STATE_REGULATION_IMPACT_NEGATIVE:
+        case STATE_ECONOMIC_DATA_NEGATIVE:
+        case STATE_GLOBAL_EVENT_NEGATIVE:
+        case STATE_SEASONALITY_NEGATIVE:
+        case STATE_PRICE_ACTION_BEARISH:
+        case STATE_TECHNICAL_INDICATORS_BEARISH:
+        case STATE_SENTIMENT_NEGATIVE:
+        case STATE_INTERMARKET_BEARISH:
+        case STATE_ECONOMIC_SURPRISE_NEGATIVE:
+        case STATE_ALGORITHMIC_TRADING_PRESSURE_DOWN:
+        case STATE_RISK_AVERSION_HIGH:
+        case STATE_PREDICTIVE_MODEL_BEARISH:
+        case STATE_UNUSUAL_OPTIONS_ACTIVITY_BEARISH:
+        case STATE_BREAKOUT_VOLUME_LOW:
+        case STATE_SUPPLY_ZONE_REJECTION:
+        case STATE_COT_REPORT_BEARISH:
+        case STATE_QUARTERLY_EARNINGS_FALL_SHORT:
+        case STATE_INFLATION_EXPECTATIONS_RISE:
+        case STATE_CANDLESTICK_BEARISH:
+        case STATE_MACD_BELOW_SIGNAL:
+        case STATE_COMPETITION_INTENSIFIES:
+        case STATE_EARNINGS_MOMENTUM_NEGATIVE:
+        case STATE_VALUATION_OVERSTRETCHED:
+        case STATE_INTEREST_RATE_SENSITIVITY_HIGH:
+        case STATE_CURRENCY_IMPACT_NEGATIVE:
+        case STATE_COMMODITY_PRICE_SLUMP:
+        case STATE_GLOBAL_SUPPLY_CHAIN_DISRUPTION:
+        case STATE_CONSUMER_SENTIMENT_FALL:
+        case STATE_POLITICAL_UNREST_RISK:
+        case STATE_INSIDER_SELLING_INCREASED:
+        case STATE_TECHNICAL_BREAKDOWN:
+        case STATE_ALGO_TRADING_VOLATILITY_INCREASE:
+        case STATE_GOLD_TECHNICAL_OVERSOLD:             // Gold-specific technical indicators signaling oversold conditions
+       case STATE_GOLD_BREAKOUT_DOWN_CONFIRMED:        // Confirmed breakout to the downside for gold
+       case STATE_GOLD_RESISTANCE_HOLD:                // Gold prices failing to break above key resistance levels
+       case STATE_GOLD_DEMAND_WEAKENING:               // Indications of weakening demand for gold
+       case STATE_GOLD_INVESTMENT_DEMAND_DROP:         // Drop in investment demand for gold: e.g.: ETF outflows
+       case STATE_GOLD_CENTRAL_BANKS_SELLING:          // Reports of central banks reducing their gold reserves
+       case STATE_GOLD_MINING_OUTPUT_INCREASE:         // Increase in gold mining output: potentially leading to oversupply
+       case STATE_USD_STRENGTHENING_AGAINST_GOLD:      // The USD strengthening against gold: making gold more expensive in other currencies
+       case STATE_REAL_INTEREST_RATES_RISING:          // Rising real interest rates: diminishing gold's appeal as a non-yielding asset
+       case STATE_GOLD_IMPORT_TARIFFS_RAISED:          // Increased import tariffs on gold in key markets
+       case STATE_GOLD_JEWELRY_DEMAND_FALL:            // Fall in demand for gold jewelry: particularly in major markets like India and China
+       case STATE_GOLD_TECHNICAL_SMA_CROSSOVER_BEARISH:// Bearish simple moving average (SMA) crossover in gold price charts
+       case STATE_GOLD_FUTURES_CONTRACTS_BEARISH_SENTIMENT: // Bearish sentiment in gold futures contracts
+       case STATE_GOLD_MARKET_MANIPULATION_RUMORS:     // Rumors or news of market manipulation in the gold market
+       case STATE_GOLD_LIQUIDATION_BY_LARGE_HOLDERS:   // Large-scale gold liquidation by institutional holders or hedge funds
+       case STATE_GOLD_SAFE_HAVEN_DEMAND_DROP:         // Decrease in demand for gold as a safe haven asset
+       case STATE_GOLD_BEARISH_HARMONIC_PATTERN:       // Bearish harmonic pattern recognition in gold trading charts
+       case STATE_GOLD_PRICE_BELOW_200DMA:             // Gold price falling below the 200-day moving average
+       case STATE_INVESTOR_SENTIMENT_SHIFT_FROM_GOLD:  // Shift in investor sentiment away from gold to other assets
+       case STATE_GOLD_BEARISH_ENGULFING_PATTERN:      // Bearish engulfing candlestick pattern on gold charts
+       case STATE_ECONOMIC_RECOVERY_STRENGTHENING:     // Strengthening economic recovery reducing gold's appeal as a hedge
+       case STATE_GOLD_TRADING_VOLUME_DECLINE:         // Decline in trading volumes for gold: indicating reduced interest
+       case STATE_GOLD_DERIVATIVES_BEARISH_INDICATORS: // Bearish indicators from gold derivatives markets
+            return SELL; // Example: Sell in strong downward trends or negative market conditions
+
+        // Neutral or uncertain states
+        case STATE_STEADY:
+        case STATE_VOLATILE:
+        case STATE_CONSOLIDATING:
+        case STATE_RANGING_HIGH:
+        case STATE_RANGING_LOW:
+        case STATE_RANGING_MIDDLE:
+        case STATE_TREND_EXHAUSTION_UP:
+        case STATE_TREND_EXHAUSTION_DOWN:
+        case STATE_VOLUME_SPIKE_HIGH:
+        case STATE_VOLUME_SPIKE_LOW:
+        case STATE_INDICATOR_OVERBOUGHT:
+        case STATE_INDICATOR_OVERSOLD:
+        case STATE_LIQUIDITY_SPIKE:
+        case STATE_LIQUIDITY_DRY_UP:
+        case STATE_CORRELATION_BREAKDOWN:
+        case STATE_MARKET_FATIGUE_UP:
+        case STATE_MARKET_FATIGUE_DOWN:
+        case STATE_ORDER_FLOW_IMBALANCE_BUY:
+        case STATE_ORDER_FLOW_IMBALANCE_SELL:
+        case STATE_REGULATORY_APPROVAL_GAINED:
+        case STATE_REGULATORY_HURDLE_FACED:
+        case STATE_SHARE_BUYBACK_ANNOUNCED:
+        case STATE_ENVIRONMENTAL_SUSTAINABILITY_FOCUS:
+        case STATE_GOVERNMENT_POLICY_CONCERN:
+        case STATE_CRYPTO_MARKET_INFLUENCE:
+        case STATE_SOCIAL_MEDIA_TRENDING:
+        case STATE_RETAIL_INVESTOR_SURGE:
+        case STATE_SHORT_SQUEEZE_IMMINENT:
+        case STATE_VOLUME_CONSOLIDATION:
+        case STATE_HEDGE_FUND_INTEREST_INCREASE:
+            return HOLD; // Example: Hold in uncertain or neutral market conditions
+
+        default:
+            return HOLD; // Default action is to hold
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function - called on every new tick                  |
+//+------------------------------------------------------------------+
+void OnTick() {
+    // Update market price data and store it in predefined buffers
+    UpdatePriceData();
+
+    // Determine the current market state based on the latest price data and predefined conditions
+    MARKET_STATE newState = DetermineCurrentState(OpenPrices, ClosePrices, HighPrices, LowPrices, Spread, TickVolume);
+
+    // Use the current market state to predict the next trading action
+    TradeAction prediction = PredictNextState(OpenPrices, ClosePrices, HighPrices, LowPrices, Spread, TickVolume);
+
+    // If the state has changed, log the transition
+    if (newState != previousState) {
+        LogStateTransition(previousState, newState);
+        previousState = newState; // Update the previous state for the next tick
+    }
+
+    // Displaying current action and state using the Comment function
+    Comment("\nPosition: " + TradeActionToString(prediction) + "\nCurrent State: " + IntegerToString(newState));
+
+    // Execute trading logic based on the predicted market state
+    ImplementTradingLogic(prediction);
+
+    // Periodically update the Markov model based on accumulated historical data
+    PeriodicUpdate();
+    CheckModelUpdate();
+}
+//+------------------------------------------------------------------+
+//| Convert TradeAction enum to string for display                   |
+//+------------------------------------------------------------------+
+string TradeActionToString(TradeAction action) {
+    switch (action) {
+        case BUY: return "BUY";
+        case SELL: return "SELL";
+        default: return "HOLD";
+      
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Function to implement trading logic based on the predicted action |
+//+------------------------------------------------------------------+
+void ImplementTradingLogic(TradeAction action) {
+    MqlTradeResult result; // Declare the result variable to store trade operation results
+
+    switch(action) {
+        case BUY:
+            Comment("Placing BUY order");
+            OpenBuyTrade(Symbol(), lotSize, stopLoss, takeProfit, "BUY Trade executed");
+            break;
+        case SELL:
+            Comment("Placing SELL order");
+            OpenSellTrade(Symbol(), lotSize, stopLoss, takeProfit, "SELL Trade executed");
+            break;
+        case HOLD:
+            Comment("Holding position");
+            // No action required for HOLD
+            break;
+    }
+}
+
+
+//+------------------------------------------------------------------+
+//| Function to update price data and buffers                        |
+//+------------------------------------------------------------------+
+void UpdatePriceData() {
+    // Ensure the size of arrays matches the historySize or the available bars
+    int totalBars = Bars(SYMBOLY, TIMEFRAME);
+    int barsToFetch = MathMin(historySize, totalBars);
+    
+    // Resize arrays to ensure they match the number of bars we're going to fetch
+    if (!ResizePriceArrays(barsToFetch)) { // Adjusted to pass the actual bars to fetch
+        Comment("\nError resizing price data arrays.");
+        return;
+    }
+
+    // Loop over the number of bars to fetch
+  // Loop over the specified history size
+for(int i = 0; i < barsToFetch; i++) {
+    // Fetch and store the price data for the current bar
+    if (!StorePriceDataForBar(i)) { // Corrected to remove the unnecessary second parameter
+        Comment("\nError storing price data for bar ", i);
+        break; // Exit the loop if data for a bar cannot be stored
+    }
+}
+
+}
+
+// Adjustments to ResizePriceArrays and StorePriceDataForBar functions might be needed
+
+//+------------------------------------------------------------------+
+//| Function to resize price data arrays                             |
+//+------------------------------------------------------------------+
+bool ResizePriceArrays(int barsToResize) {
+    // Resize the arrays to match the specified number of bars
+    bool isResized = ArrayResize(OpenPrices, barsToResize) &&
+                     ArrayResize(ClosePrices, barsToResize) &&
+                     ArrayResize(HighPrices, barsToResize) &&
+                     ArrayResize(LowPrices, barsToResize) &&
+                     ArrayResize(Spread, barsToResize) &&
+                     ArrayResize(TickVolume, barsToResize);
+    
+    // Return the result of the resizing operation
+    return isResized;
+}
+
+//+------------------------------------------------------------------+
+//| Function to store price data for a specific bar                  |
+//+------------------------------------------------------------------+
+bool StorePriceDataForBar(int barIndex) {
+    // Check if the bar index is within the range of available data
+    if (barIndex >= Bars(SYMBOLY, TIMEFRAME)) {
+        return false; // Bar index is out of range
+    }
+    
+    // Fetch and store the price data for the specific bar
+    OpenPrices[barIndex] = iOpen(SYMBOLY, TIMEFRAME, barIndex);
+    ClosePrices[barIndex] = iClose(SYMBOLY, TIMEFRAME, barIndex);
+    HighPrices[barIndex] = iHigh(SYMBOLY, TIMEFRAME, barIndex);
+    LowPrices[barIndex] = iLow(SYMBOLY, TIMEFRAME, barIndex);
+    TickVolume[barIndex] = iVolume(SYMBOLY, TIMEFRAME, barIndex);
+    
+    // Handle the spread for the latest bar (barIndex == 0)
+    if (barIndex == 0) {
+        long spreadInPoints = SymbolInfoInteger(SYMBOLY, SYMBOL_SPREAD);
+        Spread[barIndex] = spreadInPoints * _Point; // Convert from points to the symbol's price units
+    } else {
+        // For historical bars, spread isn't applicable. Assign a default or previous value if needed.
+        Spread[barIndex] = Spread[0]; // Example: Assigning the current spread to historical bars
+    }
+    
+    return true; // Data stored successfully
+}
+
+//+------------------------------------------------------------------+
+//| Open Buy Trade Function                                          |
+//+------------------------------------------------------------------+
+bool OpenBuyTrade(string symbolbuy, double volume, double stopLosse, double takeProfits, string comment)
+  {
+// Define the trade request structure
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+
+// Define the parameters of the request for a purchase order
+   request.action = TRADE_ACTION_DEAL;                   // Trade action
+   request.symbol = symbolbuy;                              // Trading symbol
+   request.volume = volume;                              // Volume in lots
+   request.type = ORDER_TYPE_BUY;                        // Order type - Buy
+   request.price = SymbolInfoDouble(symbolbuy, SYMBOL_ASK); // Price for buy orders
+
+// Calculate ATR value
+   double atrValue = iATR(symbolbuy, TIMEFRAME, 14); // Example: Daily ATR with 14 periods
+
+// Calculate Stop Loss and Take Profit
+   request.sl = request.price - (atrValue * stopLoss);   // Stop loss price
+   request.tp = request.price + (atrValue * takeProfit); // Take profit price
+
+   request.deviation = 2;     // Maximum price deviation in points
+   request.magic = 0;         // Magic number to identify your orders
+   request.comment = comment; // Comment
+
+// Send the trade request
+   if(!OrderSend(request, result))
+     {
+      Print("Buy Trade Error: ", GetLastError(), " ", result.comment);
+      return false;
+     }
+   else
+     {
+      Print("Buy Trade successful: ", result.order);
+      return true;
+     }
+  }
+//+------------------------------------------------------------------+
+//| Open Sell Trade Function                                         |
+//+------------------------------------------------------------------+
+bool OpenSellTrade(string symbolsell, double volume, double stopLosse, double takeProfits, string comment)
+  {
+// Define the trade request structure
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+
+// Define the parameters of the request for a sell order
+   request.action = TRADE_ACTION_DEAL;                   // Trade action
+   request.symbol = symbolsell;                              // Trading symbol
+   request.volume = volume;                              // Volume in lots
+   request.type = ORDER_TYPE_SELL;                       // Order type - Sell
+   request.price = SymbolInfoDouble(symbolsell, SYMBOL_BID); // Price for sell orders
+
+// Calculate ATR value
+   double atrValue = iATR(symbolsell, TIMEFRAME, 5); // Example: Daily ATR with 14 periods
+
+// Calculate Stop Loss and Take Profit for sell order
+   request.sl = request.price + (atrValue * stopLoss);   // Stop loss price
+   request.tp = request.price - (atrValue * takeProfit); // Take profit price
+
+   request.deviation = 2;     // Maximum price deviation in points
+   request.magic = 0;         // Magic number to identify your orders
+   request.comment = comment; // Comment
+
+// Send the trade request
+   if(!OrderSend(request, result))
+     {
+      Print("Sell Trade Error: ", GetLastError(), " ", result.comment);
+      return false;
+     }
+   else
+     {
+      Print("Sell Trade successful: ", result.order);
+      return true;
+     }
+  }
